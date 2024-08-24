@@ -4,14 +4,28 @@ use near_sdk::{
     collections::UnorderedMap,
     env::{self, sha256},
     json_types::{U128, U64},
-    near_bindgen, require, AccountId, Balance, EpochHeight, PanicOnDefault,
+    near_bindgen, require, AccountId, Balance, EpochHeight, PanicOnDefault,ext_contract,PromiseResult
 };
+use near_contract_standards::storage_management::StorageBalance;
 
 mod constant;
 mod internal;
 mod merkle_proof;
 mod token;
 mod util;
+
+use constant::{GAS_FOR_VIEW_METHOD,GAS_FOR_CALLBACK_METHOD};
+
+// external contract interface
+#[ext_contract(ext_ft)]
+pub trait FungibleToken {
+    fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance>;
+}
+// external contract interface for callback
+#[ext_contract(ext_self)]
+pub trait MyContract {
+    fn callback_after_check(&mut self, receiver_id: AccountId, amount: U128);
+}
 
 #[derive(BorshDeserialize, BorshSerialize, Debug, PartialEq)]
 pub struct Account {
@@ -85,9 +99,9 @@ impl MerkleDistributor {
         self.get_claimed_amount(account_id) > 0
     }
 
-    fn set_claim(&mut self, amount: U128) -> () {
+    fn set_claim(&mut self, receiver_id: AccountId, amount: U128) -> () {
         self.accounts.insert(
-            &env::predecessor_account_id(),
+            &receiver_id,
             &Account {
                 claimed_amount: amount.into(),
                 claimed_epoch_height: env::epoch_height(),
@@ -124,8 +138,40 @@ impl MerkleDistributor {
             "Failed to verify proof"
         );
 
-        self.set_claim(amount);
-        self.withdraw_token(amount.into());
+        let receiver_id = env::predecessor_account_id().clone();
+        // check whether the account is registered. 
+        ext_ft::storage_balance_of(
+            receiver_id.clone(),            // account id to check
+            self.token_id.clone(),          // ft token ID
+            0,                              // no deposit
+            GAS_FOR_VIEW_METHOD             // Gas fee
+        ).then(
+            ext_self::callback_after_check(
+                receiver_id, 
+                amount, 
+                env::current_account_id(), 
+                0, 
+                GAS_FOR_CALLBACK_METHOD
+            ));
+    }
+
+    #[private]
+    pub fn callback_after_check(&mut self, receiver_id: AccountId, amount: U128) {
+        // check the result of promise
+        match env::promise_result(0) {
+            PromiseResult::NotReady => env::panic_str("Promise was not ready."),
+            PromiseResult::Failed => env::panic_str("Promise failed."),
+            PromiseResult::Successful(result) => {
+                let is_registered: Option<StorageBalance> = near_sdk::serde_json::from_slice::<Option<StorageBalance>>(&result).unwrap();
+                if is_registered.is_some() {
+                    // withdraw token if the account is registered. 
+                    self.set_claim(receiver_id.clone(),amount);
+                    self.withdraw_token(receiver_id, amount.into());
+                } else {
+                    env::log_str("Account not registered in token contract.");
+                }
+            }
+        }
     }
 }
 

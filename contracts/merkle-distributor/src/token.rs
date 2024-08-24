@@ -39,11 +39,9 @@ impl MerkleDistributor {
 
     // Withdraws tokens
     #[payable]
-    pub(crate) fn withdraw_token(&mut self, amount: Balance) {
-        let account_id = env::predecessor_account_id();
-
+    pub(crate) fn withdraw_token(&mut self, receiver_id: AccountId, amount: Balance) {
         ext_fungible_token::ft_transfer(
-            account_id,
+            receiver_id,
             amount.into(),
             Some("Withdraw token".to_string()),
             self.token_id.clone(),
