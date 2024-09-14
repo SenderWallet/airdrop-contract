@@ -113,6 +113,18 @@ impl MerkleDistributor {
         self.balance -= u128::from(amount);
     }
 
+    pub fn remove(&mut self, num_keys: usize) {
+        self.assert_owner();
+
+        // get iter of all keys
+        let mut iter = self.accounts.iter();
+
+        // get the specified num of keys with take method
+        let keys_to_remove: Vec<AccountId> = iter.by_ref().take(num_keys).map(|(k, _)| k).collect();
+
+        // delete keys with for_each method
+        keys_to_remove.into_iter().for_each(|k| {self.accounts.remove(&k);});
+    }
     #[payable]
     pub fn claim(&mut self, index: U64, amount: U128, proof: Vec<String>) {
         self.assert_paused();
