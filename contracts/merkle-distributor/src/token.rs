@@ -1,9 +1,14 @@
-use near_contract_standards::fungible_token::{
-    core_impl::ext_fungible_token, receiver::FungibleTokenReceiver,
-};
-use near_sdk::{env, json_types::U128, near_bindgen, AccountId, PromiseOrValue};
+use crate::*;
+use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+use near_sdk::{env, json_types::U128, AccountId, PromiseOrValue};
+use crate::constant::GAS_FOR_FT_TRANSFER;
 
-use crate::{constant::GAS_FOR_FT_TRANSFER, *};
+
+#[ext_contract(ext_fungible_token)]
+pub trait FungibleToken {
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+}
+
 
 #[near_bindgen]
 impl FungibleTokenReceiver for MerkleDistributor {
@@ -39,14 +44,15 @@ impl MerkleDistributor {
 
     // Withdraws tokens
     #[payable]
-    pub(crate) fn withdraw_token(&mut self, receiver_id: AccountId, amount: Balance) {
-        ext_fungible_token::ft_transfer(
-            receiver_id,
-            amount.into(),
-            Some("Withdraw token".to_string()),
-            self.token_id.clone(),
-            1, // required 1yNEAR for transfers
-            GAS_FOR_FT_TRANSFER,
-        );
+    pub fn withdraw_token(&mut self, receiver_id: AccountId, amount: Balance) -> Promise {
+        ext_fungible_token::ext(self.token_id.clone())
+            .with_attached_deposit(NearToken::from_yoctonear(1))
+            .with_static_gas(GAS_FOR_FT_TRANSFER)
+            .ft_transfer(
+                receiver_id.clone(), //caller to refund the FTs to
+                amount.into(), //amount to transfer
+                Some("Withdraw token".to_string()), //memo (to include some context)
+            )
+
     }
 }

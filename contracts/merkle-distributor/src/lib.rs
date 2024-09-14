@@ -4,9 +4,12 @@ use near_sdk::{
     collections::UnorderedMap,
     env::{self, sha256},
     json_types::{U128, U64},
-    near_bindgen, require, AccountId, Balance, EpochHeight, PanicOnDefault,ext_contract,PromiseResult
+    near_bindgen, require, AccountId, EpochHeight, PanicOnDefault,ext_contract, Promise, PromiseResult,
+    NearToken,Gas,
 };
 use near_contract_standards::storage_management::StorageBalance;
+use near_contract_standards::fungible_token::Balance;
+use serde_json::json;
 
 mod constant;
 mod internal;
@@ -14,7 +17,7 @@ mod merkle_proof;
 mod token;
 mod util;
 
-use constant::{GAS_FOR_VIEW_METHOD,GAS_FOR_CALLBACK_METHOD};
+use constant::{GAS_FOR_VIEW_METHOD, GAS_FOR_CALLBACK_METHOD};
 
 // external contract interface
 #[ext_contract(ext_ft)]
@@ -111,7 +114,7 @@ impl MerkleDistributor {
     }
 
     #[payable]
-    pub fn claim(&mut self, index: U64, amount: U128, proof: Vec<String>) -> () {
+    pub fn claim(&mut self, index: U64, amount: U128, proof: Vec<String>) {
         self.assert_paused();
         require!(
             !self.get_is_claimed(env::predecessor_account_id()),
@@ -139,20 +142,16 @@ impl MerkleDistributor {
         );
 
         let receiver_id = env::predecessor_account_id().clone();
+
         // check whether the account is registered. 
-        ext_ft::storage_balance_of(
-            receiver_id.clone(),            // account id to check
-            self.token_id.clone(),          // ft token ID
-            0,                              // no deposit
-            GAS_FOR_VIEW_METHOD             // Gas fee
-        ).then(
-            ext_self::callback_after_check(
-                receiver_id, 
-                amount, 
-                env::current_account_id(), 
-                0, 
-                GAS_FOR_CALLBACK_METHOD
-            ));
+        ext_ft::ext(self.token_id.clone())
+            .with_static_gas(GAS_FOR_VIEW_METHOD)
+            .storage_balance_of(receiver_id.clone())
+            .then(
+                Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_CALLBACK_METHOD)
+                .callback_after_check(receiver_id.clone(), amount)                
+            );
     }
 
     #[private]
@@ -207,17 +206,18 @@ mod tests {
             let vm = VMContext {
                 current_account_id: accounts.current.to_string().parse().unwrap(),
                 signer_account_id: accounts.owner.to_string().parse().unwrap(),
-                signer_account_pk: vec![0, 1, 2],
+                signer_account_pk: "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp".parse()
+            .unwrap(),
                 predecessor_account_id: accounts.predecessor.to_string().parse().unwrap(),
                 input,
                 block_index: 0,
                 block_timestamp: 0,
-                account_balance: 0,
-                account_locked_balance: 0,
+                account_balance: NearToken::from_near(0),
+                account_locked_balance: NearToken::from_near(0),
                 storage_usage: 0,
-                attached_deposit: 0,
-                prepaid_gas: 10u64.pow(18),
-                random_seed: vec![0, 1, 2],
+                attached_deposit: NearToken::from_near(0),
+                prepaid_gas: Gas::from_gas(10u64.pow(18)),
+                random_seed: [0, 1, 2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31],
                 view_config: std::option::Option::None,
                 output_data_receivers: vec![],
                 epoch_height: 19,
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn claim_successful() {
         let mut context = Ctx::new(vec![]);
-        context.vm.attached_deposit = 1100;
+        context.vm.attached_deposit = NearToken::from_near(1100);
         testing_env!(context.vm);
         let mut contract = MerkleDistributor::initialize(
             env::signer_account_id(),
@@ -274,7 +274,7 @@ mod tests {
     #[should_panic(expected = "Failed to verify proof")]
     fn claim_failed_because_input_wrong_amount() {
         let mut context = Ctx::new(vec![]);
-        context.vm.attached_deposit = 1100;
+        context.vm.attached_deposit = NearToken::from_near(1100);
         testing_env!(context.vm);
         let mut contract = MerkleDistributor::initialize(
             env::signer_account_id(),
@@ -298,7 +298,7 @@ mod tests {
     #[should_panic(expected = "Already claimed")]
     fn claim_failed_because_already_claimed() {
         let mut context = Ctx::new(vec![]);
-        context.vm.attached_deposit = 1100;
+        context.vm.attached_deposit = NearToken::from_near(1100);
         testing_env!(context.vm);
         let mut contract = MerkleDistributor::initialize(
             env::signer_account_id(),
@@ -333,7 +333,7 @@ mod tests {
     #[should_panic(expected = "Can only be called when not paused")]
     fn claim_failed_because_contract_is_paused() {
         let mut context = Ctx::new(vec![]);
-        context.vm.attached_deposit = 1100;
+        context.vm.attached_deposit = NearToken::from_near(1100);
         testing_env!(context.vm);
         let mut contract = MerkleDistributor::initialize(
             env::predecessor_account_id(),
@@ -358,7 +358,7 @@ mod tests {
     #[should_panic(expected = "Can only be called by the owner")]
     fn claim_failed_because_pause_contract_not_by_owner() {
         let mut context = Ctx::new(vec![]);
-        context.vm.attached_deposit = 1100;
+        context.vm.attached_deposit = NearToken::from_near(1100);
         testing_env!(context.vm);
         let mut contract = MerkleDistributor::initialize(
             env::signer_account_id(),

@@ -1,5 +1,5 @@
-use near_sdk::Gas;
+use near_gas::NearGas;
 
-pub const GAS_FOR_FT_TRANSFER: Gas = Gas(10_000_000_000_000);
-pub const GAS_FOR_VIEW_METHOD: Gas = Gas(5_000_000_000_000);
-pub const GAS_FOR_CALLBACK_METHOD: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_FT_TRANSFER: NearGas = NearGas::from_tgas(10);
+pub const GAS_FOR_VIEW_METHOD: NearGas = NearGas::from_tgas(5);
+pub const GAS_FOR_CALLBACK_METHOD: NearGas = NearGas::from_tgas(30);
