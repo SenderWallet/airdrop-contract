@@ -6,7 +6,6 @@ use near_sdk::{
     json_types::{U128, U64},
     near_bindgen, require, AccountId, Balance, EpochHeight, PanicOnDefault,ext_contract,PromiseResult
 };
-use near_contract_standards::storage_management::StorageBalance;
 
 mod constant;
 mod internal;
@@ -14,17 +13,17 @@ mod merkle_proof;
 mod token;
 mod util;
 
-use constant::{GAS_FOR_VIEW_METHOD,GAS_FOR_CALLBACK_METHOD};
+use constant::{GAS_FOR_FT_TRANSFER, GAS_FOR_CALLBACK_METHOD, DEPOSIT_ONE_YOCTO};
 
 // external contract interface
 #[ext_contract(ext_ft)]
 pub trait FungibleToken {
-    fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance>;
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 // external contract interface for callback
 #[ext_contract(ext_self)]
 pub trait MyContract {
-    fn callback_after_check(&mut self, receiver_id: AccountId, amount: U128);
+    fn on_transfer_complete(&mut self, receiver_id: AccountId, amount: U128);
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Debug, PartialEq)]
@@ -86,17 +85,17 @@ impl MerkleDistributor {
         self.paused = false;
     }
 
-    pub fn get_balance(&self) -> Balance {
-        self.balance
+    pub fn get_balance(&self) -> U128 {
+        U128(self.balance)
     }
 
-    pub fn get_claimed_amount(&self, account_id: AccountId) -> Balance {
+    pub fn get_claimed_amount(&self, account_id: AccountId) -> U128 {
         let account = self.accounts.get(&account_id).unwrap_or_default();
-        account.claimed_amount
+        U128(account.claimed_amount)
     }
 
     pub fn get_is_claimed(&self, account_id: AccountId) -> bool {
-        self.get_claimed_amount(account_id) > 0
+        self.get_claimed_amount(account_id).0 > 0
     }
 
     fn set_claim(&mut self, receiver_id: AccountId, amount: U128) -> () {
@@ -139,14 +138,17 @@ impl MerkleDistributor {
         );
 
         let receiver_id = env::predecessor_account_id().clone();
-        // check whether the account is registered. 
-        ext_ft::storage_balance_of(
+        self.set_claim(receiver_id.clone(),amount);
+
+        ext_ft::ft_transfer(
             receiver_id.clone(),            // account id to check
+            amount, 
+            None,
             self.token_id.clone(),          // ft token ID
-            0,                              // no deposit
-            GAS_FOR_VIEW_METHOD             // Gas fee
+            DEPOSIT_ONE_YOCTO,              // 1 yocto
+            GAS_FOR_FT_TRANSFER             // Gas fee
         ).then(
-            ext_self::callback_after_check(
+            ext_self::on_transfer_complete(
                 receiver_id, 
                 amount, 
                 env::current_account_id(), 
@@ -156,21 +158,16 @@ impl MerkleDistributor {
     }
 
     #[private]
-    pub fn callback_after_check(&mut self, receiver_id: AccountId, amount: U128) {
+    pub fn on_transfer_complete(&mut self, receiver_id: AccountId, amount: U128) {
         // check the result of promise
         match env::promise_result(0) {
             PromiseResult::NotReady => env::panic_str("Promise was not ready."),
-            PromiseResult::Failed => env::panic_str("Promise failed."),
-            PromiseResult::Successful(result) => {
-                let is_registered: Option<StorageBalance> = near_sdk::serde_json::from_slice::<Option<StorageBalance>>(&result).unwrap();
-                if is_registered.is_some() {
-                    // withdraw token if the account is registered. 
-                    self.set_claim(receiver_id.clone(),amount);
-                    self.withdraw_token(receiver_id, amount.into());
-                } else {
-                    env::log_str("Account not registered in token contract.");
-                }
-            }
+            PromiseResult::Failed => {
+                self.accounts.remove(&receiver_id);
+                self.balance += u128::from(amount);
+                env::panic_str("ft_transfer failed.")
+            },
+            PromiseResult::Successful(_result) => { }
         }
     }
 }
@@ -263,11 +260,11 @@ mod tests {
             ],
         );
         assert_eq!(
-            100,
+            U128(100),
             contract.get_claimed_amount(context.accounts.predecessor.clone())
         );
         assert_eq!(true, contract.get_is_claimed(context.accounts.predecessor));
-        assert_eq!(1000, contract.get_balance());
+        assert_eq!(U128(1000), contract.get_balance());
     }
 
     #[test]
